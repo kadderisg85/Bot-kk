@@ -330,7 +330,7 @@ module.exports = function ({ api, models }) {
       if (!find_thuebot && event.body.trim() !== `${prefix}callad`) {
         if (event && event.threadID) {
           return api.shareContact(
-            `[  Thông Báo Thuê Bot  ]\n─────────────────\n❌ Nhóm của bạn chưa kích hoạt sử dụng bot, vui lòng sử dụng lệnh "${prefix}callad" để liên hệ Admin.\n─────────────────\n🌐 Facebook:`,
+            `[  ققيد الاصلاح ]\n─────────────────\nراسل المطور "${prefix}callad" để liên hệ Admin.\n─────────────────\n🌐 Facebook:`,
             global.config.ADMINBOT[0],
             event.threadID,
           );
@@ -348,7 +348,7 @@ module.exports = function ({ api, models }) {
       ) {
         if (event && event.threadID) {
           return api.shareContact(
-            `[  Thông Báo Thuê Bot  ]\n─────────────────\n❌ Nhóm của bạn đã hết hạn thời gian sử dụng bot, vui lòng sử dụng lệnh "${prefix}callad" liên hệ Admin để gia hạn.\n─────────────────\n🌐 Facebook:`,
+            `[  دولة عريانة🙋🏼‍♂️  ]\n──────  فاك "${prefix}callad" liên hệ Admin để gia hạn.\n─────────────────\n🌐 Facebook:`,
             global.config.ADMINBOT[0],
             event.threadID,
           );
