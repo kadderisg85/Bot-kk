@@ -1,42 +1,49 @@
+const fs = require("fs");
+const path = require("path");
+
 module.exports.config = {
-    name: 'autoout',
-    version: '1.1.1',
-    hasPermssion: 3,
-    credits: 'DC-Nam',
-    description: 'Tự động rời nhóm',
-    commandCategory: 'Admin',
-    usages: 'số member + thông báo',
-    cooldowns: 2
+  name: "الاوامر",
+  version: "1.0.0",
+  hasPermssion: 0,
+  credits: "عزيز",
+  description: "يعرض قائمة الأوامر من المجلد",
+  commandCategory: "مساعدة",
+  usages: "الاوامر",
+  cooldowns: 5
 };
-   async function onLoad(){
-   const { existsSync, writeFileSync } = require('fs-extra')
-   const { join } = require('path');
-   const pathData = join(__dirname, "cache","data","autoout.json");
-   if (!existsSync(pathData)) writeFileSync(pathData, "[]", "utf-8");
-     }
-onLoad()
-module.exports.handleEvent = function({
-    api,
-    event
-}) {
-    const auto = global.cmds_autoout || {};
-    if (!event.isGroup) return;
-    if (!auto.status) return;
-    if (event.participantIDs.length < auto.num) return api.sendMessage(`Bot tự rời khi nhóm dưới ${auto.num} thành viên`, event.threadID, async function() {
-        await api.removeUserFromGroup(a.getCurrentUserID(), event.threadID);
-    });
-};
-module.exports.run = function({
-    api,
-    event
-}) {
-  if (!global.cmds_autoout) global.cmds.autoout = {};
-    const auto = global.cmds_autoout || {};
-    if (isNaN(event.args[1])) return;
-    const status = !auto.status ? true: false;
-    global.cmds_autoout = {
-        status,
-        num: + event.args[1]
-    }
-    a.sendMessage(`Đã ${status ? 'bật': 'tắt'} tự động rời nhóm dưới ${event.args[1]} thành viên`, event.threadID, event.messageID);
+
+module.exports.run = async function ({ api, event }) {
+  const commandPath = __dirname; // مجلد الأوامر الحالي
+  const files = fs.readdirSync(commandPath);
+
+  // تصفية الأوامر العربية فقط
+  const arabicCommands = files
+    .filter(file => file.endsWith(".js"))
+    .map(file => {
+      try {
+        const command = require(path.join(commandPath, file));
+        if (command.config && /^[\u0600-\u06FF\s\-]+$/.test(command.config.name)) {
+          return `• ${command.config.name}`;
+        }
+      } catch (e) {
+        return null;
+      }
+    })
+    .filter(Boolean);
+
+  if (arabicCommands.length === 0) {
+    return api.sendMessage("❌ لم يتم العثور على أوامر عربية!", event.threadID, event.messageID);
+  }
+
+  const message = `
+╭───『 📜 قائمة الأوامر العربية 』───╮
+
+${arabicCommands.join("\n")}
+
+╰──── 『 🤖 بوت هيناتا تشان 』────╯
+👤 المطور: عزيز
+📎 fb.com/aziz.jr.945350
+`;
+
+  return api.sendMessage(message, event.threadID, event.messageID);
 };
