@@ -1,255 +1,139 @@
-﻿var request = require("request");const { readdirSync, readFileSync, writeFileSync, existsSync, copySync, createWriteStream, createReadStream } = require("fs-extra");
+const scdl = require('soundcloud-downloader').default
+const fs = require('fs')
+const path = require('path')
+const axios = require('axios')
+
 module.exports.config = {
-	name: "admin",
-	version: "1.0.5",
-	hasPermssion: 3,
-	credits: "Mirai Team",
-	description: "Admin Config",
-	commandCategory: "Admin",
-	usages: "Admin",
-    cooldowns: 2,
-    dependencies: {
-        "fs-extra": ""
+    name: "سمعني",
+    version: "1.0.2",
+    hasPermssion: 0,
+    credits: "ميكاسا",
+    description: "بحث وتنزيل الأغاني من SoundCloud",
+    commandCategory: "موسيقى",
+    usages: "[اسم الأغنية]",
+    cooldowns: 5,
+};
+
+const searchResults = {};
+
+async function searchTracks(keyword, limit = 5) {
+    const searchResult = await scdl.search({
+        query: keyword,
+        limit: limit,
+        resourceType: 'tracks'
+    });
+
+    if (!searchResult || !searchResult.collection || searchResult.collection.length === 0) {
+        return [];
+    }
+
+    return searchResult.collection.map(track => ({
+        title: track.title,
+        artist: track.user.username,
+        duration: formatDuration(track.duration),
+        url: track.permalink_url,
+        playCount: track.playback_count,
+        likeCount: track.likes_count
+    }));
+}
+
+async function downloadTrack(url) {
+    const track = await scdl.getInfo(url);
+    const stream = await scdl.downloadFormat(url, 'audio/mpeg');
+
+    const fileName = `${track.user.username} - ${track.title}.mp3`.replace(/[/\\?%*:|"<>]/g, '-');
+    const filePath = path.join(__dirname, fileName);
+
+    return new Promise((resolve, reject) => {
+        const writeStream = fs.createWriteStream(filePath);
+        stream.pipe(writeStream);
+        stream.on('end', () => resolve({ ...track, filePath }));
+        stream.on('error', reject);
+    });
+}
+
+function formatDuration(ms) {
+    const seconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+}
+
+module.exports.run = async function ({ api, event, args }) {
+    const { threadID, messageID, senderID } = event;
+    const keyword = args.join(" ");
+
+    if (!keyword) {
+        return api.sendMessage("من فضلك، اكتب اسم الأغنية باش نقلبولك.", threadID, messageID);
+    }
+
+    try {
+        const tracks = await searchTracks(keyword);
+        if (tracks.length === 0) {
+            return api.sendMessage("ماعنديش الأغنية هذي. جرب حاجة أخرى.", threadID, messageID);
+        }
+
+        let msg = "🎧 **نتائج البحث**:\n\n";
+        tracks.forEach((track, index) => {
+            msg += `**${index + 1}.** ${track.title} \n 👤 **الفنان:** ${track.artist}\n\n`;
+        });
+        msg += "رد على الرقم باش تحمل الأغنية.";
+
+        searchResults[senderID] = tracks;
+
+        return api.sendMessage(msg, threadID, (error, info) => {
+            global.client.handleReply.push({
+                name: this.config.name,
+                messageID: info.messageID,
+                author: senderID,
+                type: "result"
+            });
+        }, messageID);
+    } catch (error) {
+        console.error(error);
+        return api.sendMessage("كاين خطأ في البحث على الأغنية.", threadID, messageID);
     }
 };
 
-module.exports.languages = {
-    "vi": {
-        "listAdmin": `===「 ADMIN BOT 」===\n━━━━━━━━━━━━━━━\n%1\n\n==「 NGƯỜI THUÊ BOT 」==\n━━━━━━━━━━━━━━━\n%2`,
-        "notHavePermssion": 'MODE - Bạn không đủ quyền hạn để có thể sử dụng chức năng "%1"',
-        "addedNewAdmin": 'MODE - Đã thêm thành công %1 người dùng trở thành Admin Bot\n\n%2',
-      "addedNewNDH": 'MODE - Đã thêm thành công %1 người dùng trở thành Người Thuê Bot\n\n%2',
-        "removedAdmin": 'MODE - Đã gỡ thành công vai trò Admin %1 người dùng trở lại làm thành viên\n\n%2',
-      "removedNDH": 'MODE - Đã gỡ thành công vai trò Người Thuê Bot %1 người dùng trở lại làm thành viên\n\n%2'
+module.exports.handleReply = async function ({ api, event, handleReply }) {
+    const { threadID, messageID, senderID, body } = event;
 
-    },
-    "en": {
-        "listAdmin": '[Admin] Admin list: \n\n%1',
-        "notHavePermssion": '[Admin] You have no permission to use "%1"',
-        "addedNewAdmin": '[Admin] Added %1 Admin :\n\n%2',
-        "removedAdmin": '[Admin] Remove %1 Admin:\n\n%2'
+    if (handleReply.author != senderID) return;
+
+    const choice = parseInt(body);
+    if (isNaN(choice) || choice <= 0 || choice > searchResults[senderID].length) {
+        return api.sendMessage("الاختيار موش صحيح.", threadID, messageID);
     }
-}
-module.exports.onLoad = function() {
-    const { writeFileSync, existsSync } = require('fs-extra');
-    const { resolve } = require("path");
-    const path = resolve(__dirname, 'cache', 'data.json');
-    if (!existsSync(path)) {
-        const obj = {
-            adminbox: {}
-        };
-        writeFileSync(path, JSON.stringify(obj, null, 4));
-    } else {
-        const data = require(path);
-        if (!data.hasOwnProperty('adminbox')) data.adminbox = {};
-        writeFileSync(path, JSON.stringify(data, null, 4));
+
+    const selectedTrack = searchResults[senderID][choice - 1];
+
+    api.unsendMessage(handleReply.messageID);
+
+    try {
+        const downloadResult = await downloadTrack(selectedTrack.url);
+        const attachment = fs.createReadStream(downloadResult.filePath);
+
+        const trackInfo = `
+🎵 **الأغنية**: ${downloadResult.title}
+🎤 **الفنان**: ${downloadResult.user.username}
+⏱ **المدة**: ${formatDuration(downloadResult.duration)}
+👁 **عدد المشاهدات**: ${downloadResult.playback_count.toLocaleString()}
+❤ **عدد الإعجابات**: ${downloadResult.likes_count.toLocaleString()}
+        `.trim();
+
+        await api.sendMessage(
+            {
+                body: trackInfo,
+                attachment: attachment
+            },
+            threadID,
+            () => fs.unlinkSync(downloadResult.filePath),
+            messageID
+        );
+    } catch (error) {
+        console.error(error);
+        return api.sendMessage("كاين خطأ في تحميل الأغنية.", threadID, messageID);
     }
-}
-module.exports.run = async function ({ api, event, args, Users, permssion, getText }) {  
-    const content = args.slice(1, args.length);
-    if (args.length == 0) return api.sendMessage({body:`==== [ ADMIN SETTING ] ====\n━━━━━━━━━━━━━━━\n- admin list: Xem danh sách admin\n- admin add: Thêm admin mới\n- admin del: Gỡ vai trò admin\n- admin addntb: Thêm người thuê bot mới\n- admin delntb: Gỡ vai trò người thuê bot\n- admin qtvonly: Bật/Tắt tính năng chỉ qtv box được dùng bot\n- admin ntbonly: Bật/Tắt tính năng chỉ được người thuê dùng bot\n- admin only: Bật/Tắt tính năng chỉ được admin dùng bot\n- admin ibonly: Chỉ được admin mới được ib với bot`}, event.threadID, event.messageID); 
-    const { threadID, messageID, mentions } = event;
-    const { configPath } = global.client;
-    const { ADMINBOT } = global.config;
-    const { NDH } = global.config;
-    const { userName } = global.data;
-    const { writeFileSync } = global.nodemodule["fs-extra"];
-    const mention = Object.keys(mentions);
 
-    delete require.cache[require.resolve(configPath)];
-    var config = require(configPath);
-    switch (args[0]) {
-        case "list":
-        case "all":
-        case "-a": { 
-          listAdmin = ADMINBOT || config.ADMINBOT ||  [];
-            var msg = [];
-            for (const idAdmin of listAdmin) {
-                if (parseInt(idAdmin)) {
-                  const name = (await Users.getData(idAdmin)).name
-                    msg.push(`Tên: ${name}\n» FB: https://www.facebook.com/${idAdmin}`);
-                }
-            }
-          listNDH = NDH || config.NDH ||  [];
-            var msg1 = [];
-            for (const idNDH of listNDH) {
-                if (parseInt(idNDH)) {
-                  const name1 = (await Users.getData(idNDH)).name
-                    msg1.push(`Tên: ${name1}\n» FB: https://www.facebook.com/${idNDH}`);
-                }
-            }
-
-            return api.sendMessage(getText("listAdmin", msg.join("\n\n"), msg1.join("\n\n")), threadID, messageID);
-        }
-
-       
-        case "add": { 
-            if (event.senderID != global.config.NDH[0]) return api.sendMessage(`❎ Bạn không phải là Admin Bot nên không có quyền sử dụng lệnh này. `, event.threadID, event.messageID)
-            if (permssion != 3) return api.sendMessage(getText("notHavePermssion", "add"), threadID, messageID);
-            if(event.type == "message_reply") { content[0] = event.messageReply.senderID }
-            if (mention.length != 0 && isNaN(content[0])) {
-                var listAdd = [];
-
-                for (const id of mention) {
-                    ADMINBOT.push(id);
-                    config.ADMINBOT.push(id);
-                    listAdd.push(`${id} - ${event.mentions[id]}`);
-                };
-
-                writeFileSync(configPath, JSON.stringify(config, null, 4), 'utf8');
-                return api.sendMessage(getText("addedNewAdmin", mention.length, listAdd.join("\n").replace(/\@/g, "")), threadID, messageID);
-            }
-            else if (content.length != 0 && !isNaN(content[0])) {
-                ADMINBOT.push(content[0]);
-                config.ADMINBOT.push(content[0]);
-                const name = (await Users.getData(content[0])).name
-                writeFileSync(configPath, JSON.stringify(config, null, 4), 'utf8');
-                return api.sendMessage(getText("addedNewAdmin", 1, `Admin - ${name}`), threadID, messageID);
-            }
-            else return global.utils.throwError(this.config.name, threadID, messageID);
-        }
-        case "addntb": { 
-          if (event.senderID != global.config.NDH[0]) return api.sendMessage(`❎ Bạn không phải là Admin Bot nên không có quyền sử dụng lệnh này. `, event.threadID, event.messageID)
-            if (permssion != 3) return api.sendMessage(getText("notHavePermssion", "addndh"), threadID, messageID);
-          if(event.type == "message_reply") { content[0] = event.messageReply.senderID }
-            if (mention.length != 0 && isNaN(content[0])) {
-                var listAdd = [];
-                for (const id of mention) {
-                    NDH.push(id);
-                    config.NDH.push(id);
-                    listAdd.push(`${id} - ${event.mentions[id]}`);
-                };
-
-                writeFileSync(configPath, JSON.stringify(config, null, 4), 'utf8');
-                return api.sendMessage(getText("addedNewNDH", mention.length, listAdd.join("\n").replace(/\@/g, "")), threadID, messageID);
-            }
-            else if (content.length != 0 && !isNaN(content[0])) {
-                NDH.push(content[0]);
-                config.NDH.push(content[0]);
-                const name = (await Users.getData(content[0])).name
-                writeFileSync(configPath, JSON.stringify(config, null, 4), 'utf8');
-                return api.sendMessage(getText("addedNewNDH", 1, `Người Thuê Bot - ${name}`), threadID, messageID);
-            }
-            else return global.utils.throwError(this.config.name, threadID, messageID);
-                  }
-        case "remove":
-        case "rm":
-        case "del": {
-            if (event.senderID != global.config.NDH[0]) return api.sendMessage(`❎ Bạn không phải là Admin Bot nên không có quyền sử dụng lệnh này. `, event.threadID, event.messageID)
-            if (permssion != 3) return api.sendMessage(getText("notHavePermssion", "del"), threadID, messageID);
-            if(event.type == "message_reply") { content[0] = event.messageReply.senderID }
-            if (mentions.length != 0 && isNaN(content[0])) {
-                const mention = Object.keys(mentions);
-                var listAdd = [];
-
-                for (const id of mention) {
-                    const index = config.ADMINBOT.findIndex(item => item == id);
-                    ADMINBOT.splice(index, 1);
-                    config.ADMINBOT.splice(index, 1);
-                    listAdd.push(`${id} - ${event.mentions[id]}`);
-                };
-
-                writeFileSync(configPath, JSON.stringify(config, null, 4), 'utf8');
-                return api.sendMessage(getText("removedAdmin", mention.length, listAdd.join("\n").replace(/\@/g, "")), threadID, messageID);
-            }
-            else if (content.length != 0 && !isNaN(content[0])) {
-                const index = config.ADMINBOT.findIndex(item => item.toString() == content[0]);
-                ADMINBOT.splice(index, 1);
-                config.ADMINBOT.splice(index, 1);
-                const name = (await Users.getData(content[0])).name
-                writeFileSync(configPath, JSON.stringify(config, null, 4), 'utf8');
-                return api.sendMessage(getText("removedAdmin", 1, `${content[0]} - ${name}`), threadID, messageID);
-            }
-            else global.utils.throwError(this.config.name, threadID, messageID);
-            }
-
-        case "removentb":
-        case "delntb":{
-          if (event.senderID != global.config.NDH[0]) return api.sendMessage(`❎ Bạn không phải là Admin Bot nên không có quyền sử dụng lệnh này. `, event.threadID, event.messageID)
-            if (permssion != 3) return api.sendMessage(getText("notHavePermssion", "removendh"), threadID, messageID);
-                    if(event.type == "message_reply") { content[0] = event.messageReply.senderID }
-            if (mentions.length != 0 && isNaN(content[0])) {
-                const mention = Object.keys(mentions);
-                var listAdd = [];
-
-                for (const id of mention) {
-                    const index = config.NDH.findIndex(item => item == id);
-                    NDH.splice(index, 1);
-                    config.NDH.splice(index, 1);
-                    listAdd.push(`${id} -${event.mentions[id]}`);
-                };
-
-                writeFileSync(configPath, JSON.stringify(config, null, 4), 'utf8');
-                return api.sendMessage(getText("removedNDH", mention.length, listAdd.join("\n").replace(/\@/g, "")), threadID, messageID);
-            }
-            else if (content.length != 0 && !isNaN(content[0])) {
-                const index = config.NDH.findIndex(item => item.toString() == content[0]);
-                NDH.splice(index, 1);
-                config.NDH.splice(index, 1);
-                const name = (await Users.getData(content[0])).name
-                writeFileSync(configPath, JSON.stringify(config, null, 4), 'utf8');
-                return api.sendMessage(getText("removedNDH", 1, `${content[0]} - ${name}`), threadID, messageID);
-            }
-            else global.utils.throwError(this.config.name, threadID, messageID);
-  }
-        case 'qtvonly': {
-       const { resolve } = require("path");
-        const pathData = resolve(__dirname, 'cache', 'data.json');
-        const database = require(pathData);
-        const { adminbox } = database;   
-          if (permssion < 1) return api.sendMessage("❎ Bạn không phải là Admin Bot nên không có quyền sử dụng lệnh này. ", threadID, messageID);
-        if (adminbox[threadID] == true) {
-            adminbox[threadID] = false;
-            api.sendMessage("✅ Đã tắt chế độ chỉ quản lý nhóm được dùng bot.", threadID, messageID);
-        } else {
-            adminbox[threadID] = true;
-            api.sendMessage("✅ Đã bật thành công chế độ chỉ quản lý nhóm dùng được bot.", threadID, messageID);
-    }
-        writeFileSync(pathData, JSON.stringify(database, null, 4));
-        break;
-    }
-   case 'ntbonly':
-        case '-ndh': {
-            //---> CODE ADMIN ONLY<---//
-   if (permssion < 2) return api.sendMessage("❎ Bạn không phải là Người Thuê Bot nên không có quyền sử dụng lệnh này. ", threadID, messageID);       
-            if (config.ndhOnly == false) {
-                config.ndhOnly = true;
-                api.sendMessage(`✅ Đã bật thành công chế độ chỉ Người Thuê Bot mới dùng được bot.`, threadID, messageID);
-            } else {
-                config.ndhOnly = false;
-                api.sendMessage(`✅ Đã tắt chế độ chỉ Người Thuê Bot mới dùng được bot.`, threadID, messageID);
-            }
-                writeFileSync(configPath, JSON.stringify(config, null, 4), 'utf8');
-                break;
-            }
-            case 'ibonly': {
-            if (permssion != 3) return api.sendMessage("❎ Bạn không phải là Admin Bot nên không có quyền sử dụng lệnh này.", threadID, messageID);
-                   if (config.adminPaOnly == false) {
-                    config.adminPaOnly = true;
-                    api.sendMessage("✅ Đã bật thành công chế độ chỉ Admin được phép ib riêng với bot", threadID, messageID);
-                } else {
-                    config.adminPaOnly = false;
-                    api.sendMessage("✅ Đã tắt chế độ chỉ Admin mới dùng được bot, tất cả mọi người bây giờ có thể ib riêng với bot.", threadID, messageID);
-                }
-                    writeFileSync(configPath, JSON.stringify(config, null, 4), 'utf8');
-            break;
-        }
-        case 'only':
-        case '-o': {
-            //---> CODE ADMIN ONLY<---//
-          if (permssion != 3) return api.sendMessage("❎ Bạn không phải là Admin Bot nên không có quyền sử dụng lệnh này. ", threadID, messageID);
-            if (config.adminOnly == false) {
-                config.adminOnly = true;
-                api.sendMessage(`✅ Đã bật thành công chế độ chỉ Admin dùng bot`, threadID, messageID);
-            } else {
-                config.adminOnly = false;
-                api.sendMessage(`✅ Đã tắt thành công chế độ chỉ Admin dùng bot, tất cả mọi người bây giờ có thể dùng bot.`, threadID, messageID);
-            }
-                writeFileSync(configPath, JSON.stringify(config, null, 4), 'utf8');
-                break;
-              }
-        default: {
-            return global.utils.throwError(this.config.name, threadID, messageID);
-        }
-    };
-      }
+    delete searchResults[senderID];
+};
