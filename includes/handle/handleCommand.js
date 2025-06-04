@@ -1,3 +1,4 @@
+
 module.exports = function ({ api, models, Users, Threads, Currencies }) {
   const fs = require("fs");
   const stringSimilarity = require('string-similarity');
@@ -9,12 +10,12 @@ module.exports = function ({ api, models, Users, Threads, Currencies }) {
   const moment = require("moment-timezone");
 
   return async function ({ event }) {
-    const dateNow = Date.now(); // ping
-    const time = moment.tz("Asia/Ho_Chi_minh").format("HH:MM:ss DD/MM/YYYY"); // giờ
+    const dateNow = Date.now();
+    const time = moment.tz("Asia/Ho_Chi_minh").format("HH:MM:ss DD/MM/YYYY");
     const times = process.uptime(),
           hours = Math.floor(times / (60 * 60)),
           minutes = Math.floor((times % (60 * 60)) / 60),
-          seconds = Math.floor(times % 60); // upt
+          seconds = Math.floor(times % 60);
 
     const { allowInbox, PREFIX, ADMINBOT, NDH, DeveloperMode, adminOnly, keyAdminOnly, ndhOnly, adminPaseOnly } = global.config;
     const { userBanned, threadBanned, threadInfo, threadData, commandBanned } = global.data;
@@ -22,8 +23,29 @@ module.exports = function ({ api, models, Users, Threads, Currencies }) {
     var { body, senderID, threadID, messageID } = event;
     var senderID = String(senderID), threadID = String(threadID);
     const threadSetting = threadData.get(threadID) || {};
-    const prefixRegex = new RegExp(`^(<@!?${senderID}>|${escapeRegex((threadSetting.hasOwnProperty("PREFIX")) ? threadSetting.PREFIX : PREFIX)})\\s*`);
-    if (!prefixRegex.test(body)) return;
+    
+    // منع البوت من الرد على نفسه
+    if (senderID === api.getCurrentUserID()) return;
+    
+    // التحقق من وجود محتوى في الرسالة
+    if (!body || body.trim() === '') return;
+    
+    // التحقق من البادئة
+    const prefix = (threadSetting.PREFIX) ? threadSetting.PREFIX : PREFIX;
+    if (!body.startsWith(prefix)) return;
+
+    // التحقق من حالة البوت
+    try {
+        const adminCommand = require('../../modules/commands/admin.js');
+        const botStatus = adminCommand.getBotStatus();
+        
+        // إذا كان البوت متوقف ولم يكن المستخدم أدمن
+        if (!botStatus && !ADMINBOT.includes(senderID.toString())) {
+            return api.sendMessage("🛑 البوت متوقف حالياً\n⚠️ يمكن للأدمن فقط استخدامه", threadID);
+        }
+    } catch (error) {
+        // إذا فشل في التحقق، استمر بشكل طبيعي
+    }
 
     const adminbot = require('../../config.json');
     let getDay = moment.tz("Asia/Ho_Chi_Minh").day();
@@ -31,35 +53,32 @@ module.exports = function ({ api, models, Users, Threads, Currencies }) {
     if (!fs.existsSync(usgPath)) fs.writeFileSync(usgPath, JSON.stringify({}));
     let usages = JSON.parse(fs.readFileSync(usgPath));
 
-    if (!global.data.allThreadID.includes(threadID) && !ADMINBOT.includes(senderID) && adminbot.adminPaseOnly == true) {
-      return api.sendMessage("Admin bot mới dùng bot trong đoạn chat riêng!!", threadID, messageID);
-    }
-    if (!ADMINBOT.includes(senderID) && adminbot.adminOnly == true) {
-      return api.sendMessage('Admin bot mới sử dụng được!!', threadID, messageID);
-    }
-    if (!NDH.includes(senderID) && !ADMINBOT.includes(senderID) && adminbot.ndhOnly == true) {
-      return api.sendMessage('NDH mới có thể sử dụng bot', threadID, messageID);
-    }
+    
 
-    const dataAdbox = require('../../modules/commands/cache/data.json');
-    var threadInf = (threadInfo.get(threadID) || await Threads.getInfo(threadID));
-    const findd = threadInf.adminIDs.find(el => el.id == senderID);
-    if (dataAdbox.adminbox.hasOwnProperty(threadID) && dataAdbox.adminbox[threadID] == true && !ADMINBOT.includes(senderID) && !findd && event.isGroup == true && !NDH.includes(senderID) && !findd && event.isGroup == true) {
-      return api.sendMessage('Quản trị viên mới sử dụng được!!', event.threadID, event.messageID);
-    }
+    // ═══════════════════════════════════════
+    // ✨ فحص الحظر والقيود العادية ✨
+    // ═══════════════════════════════════════
 
     if (userBanned.has(senderID) || threadBanned.has(threadID) || allowInbox == ![] && senderID == threadID) {
       if (!ADMINBOT.includes(senderID.toString()) && !NDH.includes(senderID.toString())) {
         if (userBanned.has(senderID)) {
           const { reason, dateAdded } = userBanned.get(senderID) || {};
-          return api.sendMessage(global.getText("handleCommand", "userBanned", reason, dateAdded), threadID, async (err, info) => {
+          return api.sendMessage(`╭─────────────⭓
+│ 🚫 تم حظرك من استخدام البوت
+│ السبب: ${reason}
+│ تاريخ الحظر: ${dateAdded}
+╰─────────────⭓`, threadID, async (err, info) => {
             await new Promise(resolve => setTimeout(resolve, 5 * 1000));
             return api.unsendMessage(info.messageID);
           }, messageID);
         } else {
           if (threadBanned.has(threadID)) {
             const { reason, dateAdded } = threadBanned.get(threadID) || {};
-            return api.sendMessage(global.getText("handleCommand", "threadBanned", reason, dateAdded), threadID, async (err, info) => {
+            return api.sendMessage(`╭─────────────⭓
+│ 🚫 تم حظر هذه المجموعة
+│ السبب: ${reason} 
+│ تاريخ الحظر: ${dateAdded}
+╰─────────────⭓`, threadID, async (err, info) => {
               await new Promise(resolve => setTimeout(resolve, 5 * 1000));
               return api.unsendMessage(info.messageID);
             }, messageID);
@@ -68,9 +87,9 @@ module.exports = function ({ api, models, Users, Threads, Currencies }) {
       }
     }
 
-    const [matchedPrefix] = body.match(prefixRegex),
-          args = body.slice(matchedPrefix.length).trim().split(/ +/);
-    commandName = args.shift().toLowerCase();
+    // استخراج الأمر بعد إزالة البادئة
+    const args = body.slice(prefix.length).trim().split(/ +/);
+    const commandName = args.shift().toLowerCase();
     var command = commands.get(commandName);
     fs.writeFileSync(usgPath, JSON.stringify(usages, null, 4));
 
@@ -82,7 +101,20 @@ module.exports = function ({ api, models, Users, Threads, Currencies }) {
       const checker = stringSimilarity.findBestMatch(commandName, allCommandName);
       var gio = moment.tz("Asia/Ho_Chi_Minh").format("D/MM/YYYY || HH:mm:ss");
       if (checker.bestMatch.rating >= 0.5) command = global.client.commands.get(checker.bestMatch.target);
-      else return api.sendMessage({body:`==[ ${global.config.BOTNAME} ]==\n❎ Lệnh không tồn tại !\n✅ Lệnh gần giống là: ${checker.bestMatch.target}\n─────────────────\n🎶 Thời gian hoạt động: ${hours}:${minutes}:${seconds}\n⏰ Time: ${gio}`, attachment: global.krystal.splice(0, 1)}, threadID, messageID);
+      else return api.sendMessage(`╔══════════════════════════╗
+║    🤖 مساعد البوت الذكي    ║
+╠══════════════════════════╣
+║ ❌ عذراً، الأمر غير موجود!  ║
+║                          ║
+║ 💡 هل كنت تقصد:         ║
+║ 『 ${prefix}${checker.bestMatch.target} 』    ║
+║                          ║
+║ ⏳ مدة التشغيل:          ║
+║ ${hours}:${minutes}:${seconds}            ║
+║                          ║
+║ 🕰️ الوقت الحالي:        ║
+║ ${gio}                   ║
+╚══════════════════════════╝`, threadID, messageID);
     }
 
     if (commandBanned.get(threadID) || commandBanned.get(senderID)) {
@@ -90,19 +122,29 @@ module.exports = function ({ api, models, Users, Threads, Currencies }) {
         const banThreads = commandBanned.get(threadID) || [],
               banUsers = commandBanned.get(senderID) || [];
         if (banThreads.includes(command.config.name))
-          return api.sendMessage(global.getText("handleCommand", "commandThreadBanned", command.config.name), threadID, async (err, info) => {
+          return api.sendMessage(`╭─────────────⭓
+│ 🚫 تم حظر الأمر "${command.config.name}"
+│ في هذه المجموعة
+╰─────────────⭓`, threadID, async (err, info) => {
             await new Promise(resolve => setTimeout(resolve, 5 * 1000))
             return api.unsendMessage(info.messageID);
           }, messageID);
         if (banUsers.includes(command.config.name))
-          return api.sendMessage(global.getText("handleCommand", "commandUserBanned", command.config.name), threadID, async (err, info) => {
+          return api.sendMessage(`╭─────────────⭓
+│ 🚫 تم حظرك من استخدام الأمر
+│ "${command.config.name}"
+╰─────────────⭓`, threadID, async (err, info) => {
             await new Promise(resolve => setTimeout(resolve, 5 * 1000));
             return api.unsendMessage(info.messageID);
           }, messageID);
       }
     }
+
     if (command.config.commandCategory.toLowerCase() == 'nsfw' && !global.data.threadAllowNSFW.includes(threadID) && !ADMINBOT.includes(senderID))
-      return api.sendMessage(global.getText("handleCommand", "threadNotAllowNSFW"), threadID, async (err, info) => {
+      return api.sendMessage(`╭─────────────⭓
+│ 🔞 المحتوى المحدود العمر
+│ غير مسموح في هذه المجموعة
+╰─────────────⭓`, threadID, async (err, info) => {
         await new Promise(resolve => setTimeout(resolve, 5 * 1000))
         return api.unsendMessage(info.messageID);
       }, messageID);
@@ -113,30 +155,53 @@ module.exports = function ({ api, models, Users, Threads, Currencies }) {
         threadInfo2 = (threadInfo.get(threadID) || await Threads.getInfo(threadID))
         if (Object.keys(threadInfo2).length == 0) throw new Error();
       } catch (err) {
-        logger(global.getText("handleCommand", "cantGetInfoThread", "error"));
+        logger("❌ خطأ في الحصول على معلومات المجموعة", "error");
       }
 
+    // ═══════════════════════════════════════
+    // 🎭 نظام الصلاحيات المطور
+    // ═══════════════════════════════════════
     var permssion = 0;
     var threadInfoo = (threadInfo.get(threadID) || await Threads.getInfo(threadID));
     const find = threadInfoo.adminIDs.find(el => el.id == senderID);
     if (ADMINBOT.includes(senderID.toString())) permssion = 3;
     else if (NDH.includes(senderID.toString())) permssion = 2;
     else if (!ADMINBOT.includes(senderID) && find) permssion = 1;
+    
     var quyenhan = ""
     if (command.config.hasPermssion == 1 ){
-      quyenhan = "Quản Trị Viên"
+      quyenhan = "👑 مشرف المجموعة"
     } else if (command.config.hasPermssion == 2 ) {
-      quyenhan = "Người Thuê Bot mới sử dụng được nhé"
+      quyenhan = "⭐ مستأجر البوت"
     } else if(command.config.hasPermssion == 3) {
-      quyenhan = "ADMIN"
+      quyenhan = "🔰 مطور البوت"
     }
-    if (command.config.hasPermssion > permssion) return api.sendMessage(`Quyền hạn của lệnh: ${command.config.name} là ${quyenhan}`, event.threadID, event.messageID);
+    
+    if (command.config.hasPermssion > permssion) return api.sendMessage(`╔══════════════════════════╗
+║    🚫 صلاحية غير كافية    ║
+╠══════════════════════════╣
+║ الأمر: ${command.config.name}           ║
+║ المطلوب: ${quyenhan}        ║
+║                          ║
+║ 💡 اطلب من ${quyenhan}    ║
+║ تنفيذ هذا الأمر          ║
+╚══════════════════════════╝`, event.threadID, event.messageID);
 
+    // ═══════════════════════════════════════
+    // ⏱️ نظام التهدئة المطور
+    // ═══════════════════════════════════════
     if (!client.cooldowns.has(command.config.name)) client.cooldowns.set(command.config.name, new Map());
     const timestamps = client.cooldowns.get(command.config.name);
     const expirationTime = (command.config.cooldowns || 1) * 1000;
     if (timestamps.has(senderID) && dateNow < timestamps.get(senderID) + expirationTime)
-      return api.sendMessage(`⏱ Bạn đang trong thời gian chờ!\n Vui lòng thử lại sau ${((timestamps.get(senderID) + expirationTime - dateNow)/1000).toString().slice(0, 5)}s nữa nhé!!!`, threadID, messageID);
+      return api.sendMessage(`╭─────────────⭓
+│ ⏱️ الرجاء الانتظار!
+│ 
+│ وقت التهدئة المتبقي:
+│ ${((timestamps.get(senderID) + expirationTime - dateNow)/1000).toString().slice(0, 5)} ثانية
+│
+│ ⚡ حاول مرة أخرى لاحقاً
+╰─────────────⭓`, threadID, messageID);
 
     var getText2;
     if (command.languages && typeof command.languages == 'object' && command.languages.hasOwnProperty(global.config.language))
@@ -166,10 +231,19 @@ module.exports = function ({ api, models, Users, Threads, Currencies }) {
       command.run(Obj);
       timestamps.set(senderID, dateNow);
       if (DeveloperMode == !![])
-        logger(global.getText("handleCommand", "executeCommand", time, commandName, senderID, threadID, args.join(" "), (Date.now()) - dateNow), "MODE");
+        logger(`✅ تم تنفيذ الأمر: ${commandName} | المستخدم: ${senderID} | المجموعة: ${threadID} | الوقت: ${time}`, "MODE");
       return;
     } catch (e) {
-      return api.sendMessage(global.getText("handleCommand", "commandError", commandName, e), threadID);
+      return api.sendMessage(`╔══════════════════════════╗
+║      ❌ خطأ في الأمر      ║
+╠══════════════════════════╣
+║ الأمر: ${commandName}              ║
+║                          ║
+║ 🐛 تفاصيل الخطأ:        ║
+║ ${e.message.slice(0, 20)}...       ║
+║                          ║
+║ 📧 أبلغ المطور عن هذا الخطأ ║
+╚══════════════════════════╝`, threadID);
     }
   };
 };
